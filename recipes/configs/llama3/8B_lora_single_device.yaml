@@ -29,12 +29,12 @@ model:
 # Tokenizer
 tokenizer:
   _component_: torchtune.models.llama3.llama3_tokenizer
-  path: /tmp/Meta-Llama-3-8B-Instruct/original/tokenizer.model
+  path: /mnt/models/Meta-Llama-3-8B-Instruct/original/tokenizer.model
   max_seq_len: null
 
 checkpointer:
   _component_: torchtune.training.FullModelMetaCheckpointer
-  checkpoint_dir: /tmp/Meta-Llama-3-8B-Instruct/original/
+  checkpoint_dir: /mnt/models/Meta-Llama-3-8B-Instruct/original/
   checkpoint_files: [
     consolidated.00.pth
   ]
@@ -48,6 +48,7 @@ save_adapter_weights_only: False
 dataset:
   packed: False # Set to true for great speed ups
   _component_: torchtune.datasets.alpaca_cleaned_dataset
+data_path: /home/gta/data/alpaca-cleaned/
 seed: null
 shuffle: True
 batch_size: 2
@@ -65,7 +66,7 @@ lr_scheduler:
 loss:
   _component_: torchtune.modules.loss.CEWithChunkedOutputLoss
 
-# Training
+# Trainings
 epochs: 1
 max_steps_per_epoch: null
 gradient_accumulation_steps: 64
@@ -80,7 +81,7 @@ log_every_n_steps: 1
 log_peak_memory_stats: True
 
 # Environment
-device: cuda
+device: xpu
 dtype: bf16
 
 # Activations Memory

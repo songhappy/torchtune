@@ -81,7 +81,7 @@ log_every_n_steps: 1
 log_peak_memory_stats: True
 
 # Environment
-device: cuda
+device: xpu
 dtype: bf16
 
 # Activations Memory
