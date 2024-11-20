@@ -690,6 +690,7 @@ class FullFinetuneRecipeSingleDevice(FTRecipeInterface):
                     batch["labels"] != self._loss_fn.ignore_index
                 ).sum()
                 num_tokens += current_num_tokens
+                total_tokens +=current_num_tokens        
 
                 # Loss is normalized by default so we multiply by the number of tokens
                 # This way we can normalize by the total number of tokens if we're accumulating gradients
@@ -697,7 +698,7 @@ class FullFinetuneRecipeSingleDevice(FTRecipeInterface):
                 running_loss += current_loss
                 current_loss.backward()
                 
-                if self.global_step >= 10: break
+                if self.global_step >= 100: break
                 # Step with optimizer
                 if (idx + 1) % self._gradient_accumulation_steps == 0:
                     if not self._optimizer_in_bwd:
@@ -772,7 +773,7 @@ class FullFinetuneRecipeSingleDevice(FTRecipeInterface):
                 # if the schedule cycle doesn't align with gradient accumulation.
                 self._profiler.step()
                 
-            print("avg tokens_per_second_on_single_device: ", round(total_tokens.items() / total_time, 2))
+            print("avg tokens_per_second_on_single_device: ", round(total_tokens.item() / total_time, 2))
             self.epochs_run += 1
             self.save_checkpoint(epoch=curr_epoch)
 
