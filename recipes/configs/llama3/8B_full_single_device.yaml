@@ -30,7 +30,7 @@ tokenizer:
 dataset:
   packed: False # Set to true for great speed ups
   _component_: torchtune.datasets.alpaca_dataset
-data_path: /home/sdp/data/alpaca-cleaned/
+data_path: /home/gta/data/alpaca-cleaned/
 seed: null
 shuffle: True
 
@@ -53,7 +53,7 @@ resume_from_checkpoint: False
 batch_size: 2
 epochs: 3
 optimizer:
-  _component_: bitsandbytes.optim.PagedAdamW8bit
+  _component_: torch.optim.AdamW
   lr: 1e-5
 lr_scheduler:
   _component_: torchtune.training.lr_schedulers.get_cosine_schedule_with_warmup
@@ -66,7 +66,7 @@ optimizer_in_bwd: True
 compile: False
 
 # Training environment
-device: cpu
+device: xpu
 
 # Memory management
 enable_activation_checkpointing: True
