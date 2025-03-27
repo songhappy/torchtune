@@ -675,6 +675,7 @@ class LoRAFinetuneRecipeSingleDevice(FTRecipeInterface):
         running_loss = 0
         num_tokens = 0
 
+        training_begin = time.time()
         with self._profiler as prof:
             # self.epochs_run should be non-zero when we're resuming from a checkpoint
             for curr_epoch in range(self.epochs_run, self.total_epochs):
@@ -777,12 +778,14 @@ class LoRAFinetuneRecipeSingleDevice(FTRecipeInterface):
                 self.epochs_run += 1
                 start_save_checkpoint = time.perf_counter()
                 log.info("Starting checkpoint save...")
-                self.save_checkpoint(epoch=curr_epoch)
+                # self.save_checkpoint(epoch=curr_epoch)
                 log.info(
                     "Checkpoint saved in {:.2f} seconds.".format(
                         time.perf_counter() - start_save_checkpoint
                     )
                 )
+        print("training time:", time.time()-training_begin)
+        # print(prof.key_averages().table(sort_by="xpu_time_total",max_name_column_width=100, row_limit=50))
 
     def cleanup(self) -> None:
         self._metric_logger.close()
