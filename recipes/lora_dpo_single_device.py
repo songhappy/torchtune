@@ -33,6 +33,8 @@ from torchtune.recipe_interfaces import FTRecipeInterface
 from torchtune.rlhf import ChosenRejectedOutputs
 
 from tqdm import tqdm
+from torchtune.utils import get_torch_device_namespace
+torch_device = get_torch_device_namespace()
 
 log = utils.get_logger("DEBUG")
 
@@ -333,6 +335,43 @@ class LoRADPORecipeSingleDevice(FTRecipeInterface):
         if self._device.type != "cpu":
             memory_stats = training.get_memory_stats(device=self._device)
             training.log_memory_stats(memory_stats)
+        
+        total_params = sum(p.numel() for p in model.parameters())  # Count total parameters
+        total_size = sum(p.element_size() * p.numel() for p in model.parameters())  # Size in bytes
+        total_size_gb = total_size / (1024 * 1024 * 1024)  # Convert to GB
+
+        print(model)
+        print(f"Total Parameters: {total_params:,}")
+        print(f"Model Size: {total_size_gb:.2f} GB")
+
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"Trainable Parameters: {trainable_params}")
+
+        def forward_hook(module, input, output):
+            peak_memory_alloc = torch_device.max_memory_reserved(self._device) / (1024**3)
+            print(f"\n[FORWARD] Layer: {module.__class__.__name__}", peak_memory_alloc)
+           
+
+        # 🔹 Hook function for gradients
+        def grad_hook(param_name):
+            def hook(grad):
+                torch.xpu.synchronize()
+                peak_memory_alloc = torch_device.max_memory_reserved(self._device) / (1024**3)
+                print(f"\n[BACKWARD] Parameter: {param_name}", peak_memory_alloc)
+                return grad  # Clone to prevent in-place modification
+            return hook
+
+        for name, layer in model.named_children():
+            layer.register_forward_hook(forward_hook)
+
+        # 🔹 Register gradient hooks on model parameters (Fix)
+        for name, param in model.named_parameters():
+            if param.requires_grad:  
+                param.register_hook(grad_hook(name))
+            else:
+                print(f"Skipping hook for frozen param: {name}")
+            
+
         return model
 
     def _setup_optimizer(
@@ -493,14 +532,21 @@ class LoRADPORecipeSingleDevice(FTRecipeInterface):
 
         with self.activations_handling_ctx:
             all_logits = model(concatenated_input_ids)
+        
+        peak_memory_alloc = torch_device.max_memory_reserved(self._device) / (1024**3)
+        print("before get_batch_log_probs ", peak_memory_alloc)
+
 
         all_log_probs = rlhf.get_batch_log_probs(all_logits, concatenated_labels)
-
+        peak_memory_alloc = torch_device.max_memory_reserved(self._device) / (1024**3)
+        print("after get_batch_log_probs ", peak_memory_alloc)
+       
         chosen_log_probs = all_log_probs[:len_chosen]
         rejected_log_probs = all_log_probs[len_chosen:]
 
         chosen_logits = all_logits[:len_chosen]
         rejected_logits = all_logits[len_chosen:]
+        
 
         return ChosenRejectedOutputs(
             chosen_log_probs, rejected_log_probs, chosen_logits, rejected_logits
@@ -527,6 +573,7 @@ class LoRADPORecipeSingleDevice(FTRecipeInterface):
             self._sampler.set_epoch(curr_epoch)
             pbar = tqdm(total=self._steps_per_epoch)
             for idx, batch in enumerate(self._dataloader):
+                print("idx:", idx)
                 if (
                     self.max_steps_per_epoch is not None
                     and (idx // self._gradient_accumulation_steps)
@@ -535,9 +582,17 @@ class LoRADPORecipeSingleDevice(FTRecipeInterface):
                     break
                 # batch is input_ids, labels
                 num_tokens += batch[0].numel()
+
+                peak_memory_alloc = torch_device.max_memory_reserved(self._device) / (1024**3)
+                print("before forward", peak_memory_alloc)
+
                 policy_chosen_rejected_outputs = self.concatenated_forward(
                     self._model, batch
                 )
+                torch_device.empty_cache()  # Releases unused memory
+
+                peak_memory_alloc = torch_device.max_memory_reserved(self._device) / (1024**3)
+                print("after policy_chosen_rejected_outputs forward", peak_memory_alloc)
 
                 policy_chosen_logits_mean = (
                     policy_chosen_rejected_outputs.chosen_logits.detach().mean()
@@ -556,6 +611,12 @@ class LoRADPORecipeSingleDevice(FTRecipeInterface):
                     reference_chosen_rejected_outputs = self.concatenated_forward(
                         self._model, batch
                     )
+                
+                torch_device.empty_cache()  # Releases unused memory
+
+                peak_memory_alloc = torch_device.max_memory_reserved(self._device) / (1024**3)
+                print("after reference_chosen_rejected_outputs forward", peak_memory_alloc)
+
                 loss, chosen_rewards, rejected_rewards = self._loss_fn(
                     policy_chosen_rejected_outputs,
                     reference_chosen_rejected_outputs,
@@ -566,7 +627,17 @@ class LoRADPORecipeSingleDevice(FTRecipeInterface):
 
                 loss = loss / self._gradient_accumulation_steps
                 running_loss += loss
+
+                peak_memory_alloc = torch_device.max_memory_reserved(self._device) / (1024**3)
+                print("before backward", peak_memory_alloc)
+                torch_device.empty_cache()  # Releases unused memory
+                # torch_device.ipc_collect()  # Cleans shared memory
+
                 loss.backward()
+                torch_device.empty_cache()  # Releases unused memory
+
+                peak_memory_alloc = torch_device.max_memory_reserved(self._device) / (1024**3)
+                print("after backward", peak_memory_alloc)
 
                 # Step with optimizer
                 if (idx + 1) % self._gradient_accumulation_steps == 0:
@@ -621,7 +692,7 @@ class LoRADPORecipeSingleDevice(FTRecipeInterface):
                     t0 = time.perf_counter()
 
             self.epochs_run += 1
-            self.save_checkpoint(epoch=curr_epoch)
+            # self.save_checkpoint(epoch=curr_epoch)
 
     def cleanup(self) -> None:
         self._metric_logger.close()
