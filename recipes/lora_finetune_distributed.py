@@ -45,6 +45,29 @@ from torchtune.training.checkpointing._checkpoint_client import (
 )
 from tqdm import tqdm
 
+from torchtune.utils import get_torch_device_namespace
+torch_device = get_torch_device_namespace()
+
+
+device = (
+    'xpu' if torch.xpu.is_available()
+    else 'cuda' if torch.cuda.is_available()
+    else 'cpu'
+)
+
+def get_memo():
+
+    peak_memory_active = (
+        torch_device.memory_stats().get("active_bytes.all.peak", 0) / 1024 ** 3
+    )
+    peak_memory_alloc = torch_device.max_memory_allocated(device) /  1024 ** 3
+    peak_memory_reserved = torch_device.max_memory_reserved(device) /  1024 ** 3
+    return (time.time(), peak_memory_active, peak_memory_alloc, peak_memory_reserved)
+
+
+
+log = utils.get_logger("DEBUG")
+
 
 class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
     """
@@ -677,7 +700,9 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
         # Initialize tokens count and running loss (for grad accumulation)
         t0 = time.perf_counter()
         running_loss = 0
-        num_tokens = 0
+        num_tokens = 0        
+        total_tokens = 0
+        total_time = 0
 
         self._profiler.start()
         # self.epochs_run should be non-zero when we're resuming from a checkpoint
@@ -726,6 +751,8 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
                         ).full_tensor()
                     self._optimizer.step()
                     self._optimizer.zero_grad(set_to_none=True)
+                    torch.xpu.synchronize()
+
                     self._lr_scheduler.step()
 
                     # Update the number of steps when the weights are updated
@@ -743,6 +770,12 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
                         and self._is_rank_zero
                     ):
                         time_per_step = time.perf_counter() - t0
+                        if self.global_step > 2:
+                            total_tokens += num_tokens.cpu().numpy()
+                            total_time = total_time + time_per_step
+
+                            print("total time:", total_time, "iteration: ", self.global_step, "tokens: ", num_tokens.cpu().numpy(), "time: ", time_per_step, "tokens_per_second: ", round(num_tokens.cpu().numpy() / time_per_step ,2))                            
+
                         log_dict = {
                             "loss": loss_to_log,
                             "lr": self._optimizer.param_groups[0]["lr"],
@@ -798,8 +831,13 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
                     break
 
             self.epochs_run += 1
-            self.save_checkpoint(epoch=curr_epoch)
-
+            #self.save_checkpoint(epoch=curr_epoch)
+        if self._is_rank_zero :
+            print("avg tokens_per_second: ", round(total_tokens / total_time, 2))
+            if self._profiler is not None:
+                print(self._profiler.key_averages().table(sort_by="xpu_time_total", max_name_column_width=100, row_limit=20))
+                print(self._profiler.key_averages().table(sort_by="cpu_time_total",  max_name_column_width=100, row_limit=20))
+        
         self._profiler.stop()
 
     def _loss_step(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:

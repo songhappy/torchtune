@@ -888,6 +888,9 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
         t0 = time.perf_counter()
         running_loss = 0
         num_tokens = 0
+        total_tokens = 0
+        total_time = 0
+
 
         self._profiler.start()
         # self.epochs_run should be non-zero when we're resuming from a checkpoint
@@ -952,6 +955,7 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
                                 grad_norm = grad_norm.full_tensor()
                         self._optimizer.step()
                         self._optimizer.zero_grad(set_to_none=True)
+                        torch.xpu.synchronize()
 
                     # Update the number of steps when the weights are updated
                     self.global_step += 1
@@ -982,6 +986,12 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
                         and self._is_rank_zero
                     ):
                         time_per_step = time.perf_counter() - t0
+                        if self.global_step > 2:
+                            total_tokens += num_tokens.cpu().numpy()
+                            total_time = total_time + time_per_step
+
+                            print("total time:", total_time, "iteration: ", self.global_step, "tokens: ", num_tokens.cpu().numpy(), "time: ", time_per_step, "tokens_per_second: ", round(num_tokens.cpu().numpy() / time_per_step ,2))                            
+
                         log_dict = {
                             "loss": loss_to_log,
                             "lr": get_lr(
@@ -1044,22 +1054,27 @@ class FullFinetuneRecipeDistributed(FTRecipeInterface):
                     break
 
             self.epochs_run += 1
-            self._checkpoint_client.save_checkpoint(
-                model=self._model,
-                optimizer=(
-                    self._optimizer
-                    if not self._optimizer_in_bwd
-                    else self._optim_ckpt_wrapper
-                ),
-                training_progress=TrainingProgress(
-                    seed=self.seed,
-                    epochs_run=self.epochs_run,
-                    total_epochs=self.total_epochs,
-                    max_steps_per_epoch=self.max_steps_per_epoch,
-                    dataloader_state_dict=self._dataloader.state_dict(),
-                ),
-                epoch=curr_epoch,
-            )
+            # self._checkpoint_client.save_checkpoint(
+            #     model=self._model,
+            #     optimizer=(
+            #         self._optimizer
+            #         if not self._optimizer_in_bwd
+            #         else self._optim_ckpt_wrapper
+            #     ),
+            #     training_progress=TrainingProgress(
+            #         seed=self.seed,
+            #         epochs_run=self.epochs_run,
+            #         total_epochs=self.total_epochs,
+            #         max_steps_per_epoch=self.max_steps_per_epoch,
+            #         dataloader_state_dict=self._dataloader.state_dict(),
+            #     ),
+            #     epoch=curr_epoch,
+            # )
+        if self._is_rank_zero :
+            print("avg tokens_per_second: ", round(total_tokens / total_time, 2))
+            if self._profiler is not None:
+                print(self._profiler.key_averages().table(sort_by="xpu_time_total", max_name_column_width=100, row_limit=20))
+                print(self._profiler.key_averages().table(sort_by="cpu_time_total",  max_name_column_width=100, row_limit=20))
 
         self._profiler.stop()
 
@@ -1078,7 +1093,7 @@ def recipe_main(cfg: DictConfig) -> None:
         - Parameters specified in config (see available configs through ``tune ls``)
         - Overwritten by arguments from the command-line
     """
-    config.log_config(recipe_name="FullFinetuneRecipeDistributed", cfg=cfg)
+    # config.log_config(recipe_name="FullFinetuneRecipeDistributed", cfg=cfg)
     recipe = FullFinetuneRecipeDistributed(cfg=cfg)
     recipe.setup(cfg=cfg)
     recipe.train()

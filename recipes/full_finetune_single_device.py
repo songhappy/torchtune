@@ -596,6 +596,8 @@ class FullFinetuneRecipeSingleDevice(FTRecipeInterface):
         t0 = time.perf_counter()
         running_loss = 0
         num_tokens = 0
+        total_tokens = 0
+        total_time = 0
 
         self._profiler.start()
         # self.epochs_run should be non-zero when we're resuming from a checkpoint
@@ -637,6 +639,8 @@ class FullFinetuneRecipeSingleDevice(FTRecipeInterface):
                             )
                         self._optimizer.step()
                         self._optimizer.zero_grad(set_to_none=True)
+                        torch.xpu.synchronize()
+
 
                     # Need to fix `lr_scheduler.step()` before `optimizer.step()` warning
                     if self._lr_scheduler is not None:
@@ -651,6 +655,12 @@ class FullFinetuneRecipeSingleDevice(FTRecipeInterface):
 
                     if self.global_step % self._log_every_n_steps == 0:
                         time_per_step = time.perf_counter() - t0
+                    
+                        if self.global_step > 2:
+                            total_time = total_time + time_per_step
+                            total_tokens += num_tokens.cpu().numpy()
+                        print("iteration: ", self.global_step, "tokens: ", num_tokens.cpu().numpy(), "time: ", time_per_step, "tokens_per_second: ", round(num_tokens.cpu().numpy() / time_per_step ,2))                            
+
                         log_dict = {
                             "loss": loss_to_log,
                             # For optim in backward, this assumes all optimizers have the same LR. This is currently
@@ -698,7 +708,11 @@ class FullFinetuneRecipeSingleDevice(FTRecipeInterface):
                     break
 
             self.epochs_run += 1
-            self.save_checkpoint(epoch=curr_epoch)
+            # self.save_checkpoint(epoch=curr_epoch)
+        print("avg tokens_per_second: ", round(total_tokens / total_time, 2))
+        if self._profiler is not None:
+            print(self._profiler.key_averages().table(sort_by="xpu_time_total", max_name_column_width=100, row_limit=20))
+            print(self._profiler.key_averages().table(sort_by="cpu_time_total",  max_name_column_width=100, row_limit=20))
 
         self._profiler.stop()
 
