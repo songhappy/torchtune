@@ -932,7 +932,7 @@ def recipe_main(cfg: DictConfig) -> None:
         # speed up when benchmarking fused AdamW on CPU
         training.set_torch_num_threads()
 
-    config.log_config(recipe_name="LoRAFinetuneRecipeDistributed", cfg=cfg)
+    # config.log_config(recipe_name="LoRAFinetuneRecipeDistributed", cfg=cfg)
 
     recipe = LoRAFinetuneRecipeDistributed(cfg=cfg)
     recipe.setup(cfg=cfg)
