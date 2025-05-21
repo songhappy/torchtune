@@ -18,11 +18,17 @@ conda activate guoqiong-pt
 # nohup xpu-smi dump -m 2,18 -i 1 > /home/songhappy/git/torchtune/output/llama3_3/xpu_mem_log_qlora.txt 2>&1 &
 # torchrun --nproc_per_node 2 ../codelearn/python/llm_finetune/train_fsdp2.py
 
+module load xpu-smi
+if [[ \"\$PALS_RANKID\" == \"0\" ]]; then
+    echo 'Launching xpu-smi monitor on node \$(hostname)'
+    nohup xpu-smi dump -m 2,18 -i 1 > /home/songhappy/git/torchtune/output/xpu_memo_70b_qlora_t8_rank0.txt 2>&1 &
+fi
+
 start_sec=$(date +%s)
 echo "***********start qlora t8"
 tune run  --nproc_per_node 8 lora_finetune_distributed --config /home/songhappy/git/torchtune/recipes/configs/llama3_3/70B_lora.yaml \
     device=xpu   seed=123 dataset.packed=True log_level=DEBUG\
-    model._component_=torchtune.models.llama3_1.qlora_llama3_1_70b \
+    model._component_=torchtune.models.llama3_3.qlora_llama3_3_70b \
     tokenizer.path=/home/songhappy/models/Llama-3.3-70B-Instruct/original/tokenizer.model \
     checkpointer.checkpoint_dir=/home/songhappy/models/Llama-3.3-70B-Instruct/ \
     output_dir=/home/songhappy/git/torchtune/output/llama3_3/70b_qlora_t8 \
