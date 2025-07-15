@@ -36,7 +36,7 @@ class LinearCrossEntropyLoss(SFTLoss, nn.Module):
         num_output_chunks: int = 8,
         ignore_index: int = -100,
         tp_enabled: bool = False,
-        mask_ignored_tokens: bool = True,
+        mask_ignored_tokens: bool = False,
     ):
         super().__init__()
         """
