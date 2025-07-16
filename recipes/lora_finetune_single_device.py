@@ -39,6 +39,10 @@ from torchtune.training.checkpointing._checkpoint_client import (
 
 from tqdm import tqdm
 
+import os
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from myutils import set_torch_cpp_log_level, get_memo, clean_cache,print_all_parameters,print_lora_linear_structure, get_gpu_memory_used_from_nvidia_smi, get_xpu_memory_used_from_xpu_smi
+
 
 class LoRAFinetuneRecipeSingleDevice(FTRecipeInterface):
     """
@@ -588,6 +592,8 @@ class LoRAFinetuneRecipeSingleDevice(FTRecipeInterface):
         t0 = time.perf_counter()
         running_loss = 0
         num_tokens = 0
+        total_tokens = 0
+        total_time = 0
 
         with self._profiler as prof:
             # self.epochs_run should be non-zero when we're resuming from a checkpoint
@@ -629,6 +635,12 @@ class LoRAFinetuneRecipeSingleDevice(FTRecipeInterface):
                             )
                         self._optimizer.step()
                         self._optimizer.zero_grad(set_to_none=True)
+                        if self._device.type == "xpu":
+                            torch.xpu.synchronize()
+                            print(f"idx: {idx} current_loss: {current_loss.item()} {get_xpu_memory_used_from_xpu_smi(tag='memo:', device_id=0)}")
+                        else:
+                            torch.cuda.synchronize()
+                            print(f"idx: {idx} current_loss: {current_loss.item()} {get_gpu_memory_used_from_nvidia_smi(tag='memo:', device_id=0)}")
                         self._lr_scheduler.step()
                         # Update the number of steps when the weights are updated
                         self.global_step += 1
@@ -642,6 +654,10 @@ class LoRAFinetuneRecipeSingleDevice(FTRecipeInterface):
                         # Log per-step metrics
                         if self.global_step % self._log_every_n_steps == 0:
                             time_per_step = time.perf_counter() - t0
+                            if self.global_step > 2:
+                                total_time = total_time + time_per_step
+                                total_tokens += num_tokens.cpu().numpy()
+                            print("iteration: ", self.global_step, "tokens: ", num_tokens.cpu().numpy(), "time: ", time_per_step, "tokens_per_second_on_single_device: ", round(num_tokens.cpu().numpy() / time_per_step ,2))
                             log_dict = {
                                 "loss": loss_to_log,
                                 "lr": self._optimizer.param_groups[0]["lr"],
@@ -691,7 +707,16 @@ class LoRAFinetuneRecipeSingleDevice(FTRecipeInterface):
                 self.epochs_run += 1
                 start_save_checkpoint = time.perf_counter()
                 self._logger.info("Starting checkpoint save...")
-                self.save_checkpoint(epoch=curr_epoch)
+                # self.save_checkpoint(epoch=curr_epoch)
+                print("avg tokens_per_second_on_single_device: ", round(total_tokens / total_time, 2))
+                if self._device.type != "xpu":
+                    print(self._profiler.key_averages().table(sort_by="xpu_time_total", max_name_column_width=100, row_limit=20))
+                elif self._device.type == "cuda":
+                    print(self._profiler.key_averages().table(sort_by="cuda_time_total", max_name_column_width=100, row_limit=20))
+                else:
+                    pass
+                print(self._profiler.key_averages().table(sort_by="cpu_time_total",  max_name_column_width=100, row_limit=20))
+
                 self._logger.info(
                     "Checkpoint saved in {:.2f} seconds.".format(
                         time.perf_counter() - start_save_checkpoint

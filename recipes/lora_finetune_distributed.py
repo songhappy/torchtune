@@ -4,6 +4,8 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
+
+# set_torch_cpp_log_level()
 import sys
 import time
 
@@ -44,6 +46,7 @@ from torchtune.training.checkpointing._checkpoint_client import (
     TrainingProgress,
 )
 from tqdm import tqdm
+from myutils import set_torch_cpp_log_level, get_memo, clean_cache,print_all_parameters,print_lora_linear_structure,get_xpu_memory_used_from_xpu_smi,get_gpu_memory_used_from_nvidia_smi
 
 
 class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
@@ -560,7 +563,18 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
             training.log_memory_stats(memory_stats)
 
         # synchronize before training begins
-        torch.distributed.barrier()
+        torch.distributed.barrier()        
+        # from torchtune.modules.peft.lora import LoRALinear
+        # if self._is_rank_zero:
+        #     # for name, module in model.named_modules():
+        #     #     if isinstance(module, LoRALinear):
+        #     #         print_lora_linear_structure(module, name)
+
+        #     print(f"Model structure:")
+        #     print_all_parameters(model)
+
+        # sys.exit(0)
+
 
         return model
 
@@ -680,6 +694,8 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
         t0 = time.perf_counter()
         running_loss = 0
         num_tokens = 0
+        total_tokens = 0
+        total_time = 0
 
         self._profiler.start()
         # self.epochs_run should be non-zero when we're resuming from a checkpoint
@@ -728,6 +744,16 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
                         ).full_tensor()
                     self._optimizer.step()
                     self._optimizer.zero_grad(set_to_none=True)
+                    
+                    if self._device.type == "xpu":
+                        torch.xpu.synchronize()
+                        if self._is_rank_zero:
+                            print(f"idx: {idx} current_loss: {current_loss.item()} {get_xpu_memory_used_from_xpu_smi(tag='memo:', device_id=self.rank)}")
+                    else:
+                        torch.cuda.synchronize()
+                        # if self._is_rank_zero:
+                        print(f"idx: {idx} current_loss: {current_loss.item()} {get_gpu_memory_used_from_nvidia_smi(tag='memo:', device_id=self.rank)}")
+
                     self._lr_scheduler.step()
 
                     # Update the number of steps when the weights are updated
@@ -744,7 +770,12 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
                         self.global_step % self._log_every_n_steps == 0
                         and self._is_rank_zero
                     ):
-                        time_per_step = time.perf_counter() - t0
+                        time_per_step = time.perf_counter() - t0                        
+                        if self.global_step > 2:
+                            total_tokens += num_tokens.cpu().numpy()
+                            total_time = total_time + time_per_step
+
+                            print("total time:", total_time, "iteration: ", self.global_step, "tokens: ", num_tokens.cpu().numpy(), "time: ", time_per_step, "tokens_per_second: ", round(num_tokens.cpu().numpy() / time_per_step ,2))                            
                         log_dict = {
                             "loss": loss_to_log,
                             "lr": self._optimizer.param_groups[0]["lr"],
@@ -800,7 +831,19 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
                     break
 
             self.epochs_run += 1
-            self.save_checkpoint(epoch=curr_epoch)
+            #self.save_checkpoint(epoch=curr_epoch)
+        if self._is_rank_zero :
+            print("avg tokens_per_second: ", round(total_tokens / total_time, 2))
+            if self._profiler is not None:
+                print("avg tokens_per_second_on_single_device: ", round(total_tokens / total_time, 2))
+                if self._device.type != "xpu":
+                    print(self._profiler.key_averages().table(sort_by="xpu_time_total", max_name_column_width=100, row_limit=20))
+                elif self._device.type == "cuda":
+                    print(self._profiler.key_averages().table(sort_by="cuda_time_total", max_name_column_width=100, row_limit=20))
+                else:
+                    pass
+                print(self._profiler.key_averages().table(sort_by="cpu_time_total",  max_name_column_width=100, row_limit=20))
+
 
         self._profiler.stop()
 
