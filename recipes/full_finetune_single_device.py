@@ -607,10 +607,10 @@ class FullFinetuneRecipeSingleDevice(FTRecipeInterface):
                     self.optimizer.zero_grad(set_to_none=True)
                     if self._device.type == "xpu":
                         torch.xpu.synchronize()
-                        print(f"idx: {idx} current_loss: {current_loss.item()} {get_xpu_memory_used_from_xpu_smi(tag='memo:', device_id=0)}")
+                        # print(f"idx: {idx} current_loss: {current_loss.item()} {get_xpu_memory_used_from_xpu_smi(tag='memo:', device_id=0)}")
                     else:
                         torch.cuda.synchronize()
-                        print(f"idx: {idx} current_loss: {current_loss.item()} {get_gpu_memory_used_from_nvidia_smi(tag='memo:', device_id=0)}")
+                        # print(f"idx: {idx} current_loss: {current_loss.item()} {get_gpu_memory_used_from_nvidia_smi(tag='memo:', device_id=0)}")
 
                     if self.lr_scheduler is not None:
                         self.lr_scheduler.step()

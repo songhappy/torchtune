@@ -747,12 +747,12 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
                     
                     if self._device.type == "xpu":
                         torch.xpu.synchronize()
-                        if self._is_rank_zero:
-                            print(f"idx: {idx} current_loss: {current_loss.item()} {get_xpu_memory_used_from_xpu_smi(tag='memo:', device_id=self.rank)}")
+                        # if self._is_rank_zero:
+                            # print(f"idx: {idx} current_loss: {current_loss.item()} {get_xpu_memory_used_from_xpu_smi(tag='memo:', device_id=self.rank)}")
                     else:
                         torch.cuda.synchronize()
                         # if self._is_rank_zero:
-                        print(f"idx: {idx} current_loss: {current_loss.item()} {get_gpu_memory_used_from_nvidia_smi(tag='memo:', device_id=self.rank)}")
+                        # print(f"idx: {idx} current_loss: {current_loss.item()} {get_gpu_memory_used_from_nvidia_smi(tag='memo:', device_id=self.rank)}")
 
                     self._lr_scheduler.step()
 
