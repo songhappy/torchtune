@@ -34,6 +34,9 @@ from torchtune.training.checkpointing._checkpoint_client import (
 from torchtune.training.lr_schedulers import get_lr
 
 from tqdm import tqdm
+import os
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from myutils import set_torch_cpp_log_level, get_memo, clean_cache,print_all_parameters,print_lora_linear_structure,get_xpu_memory_used_from_xpu_smi,get_gpu_memory_used_from_nvidia_smi
 
 
 class FullFinetuneRecipeSingleDevice(FTRecipeInterface):
@@ -559,6 +562,8 @@ class FullFinetuneRecipeSingleDevice(FTRecipeInterface):
         t0 = time.perf_counter()
         running_loss, num_tokens = 0.0, 0
         self._profiler.start()
+        total_tokens = 0
+        total_time = 0
 
         for curr_epoch in range(self.epochs_run, self.total_epochs):
             pbar = tqdm(total=self._steps_per_epoch)
@@ -600,6 +605,12 @@ class FullFinetuneRecipeSingleDevice(FTRecipeInterface):
                     # This will be a no-op for optim in bwd, but prevents a warning w/ LR Scheduler
                     self.optimizer.step()
                     self.optimizer.zero_grad(set_to_none=True)
+                    if self._device.type == "xpu":
+                        torch.xpu.synchronize()
+                        print(f"idx: {idx} current_loss: {current_loss.item()} {get_xpu_memory_used_from_xpu_smi(tag='memo:', device_id=0)}")
+                    else:
+                        torch.cuda.synchronize()
+                        print(f"idx: {idx} current_loss: {current_loss.item()} {get_gpu_memory_used_from_nvidia_smi(tag='memo:', device_id=0)}")
 
                     if self.lr_scheduler is not None:
                         self.lr_scheduler.step()
@@ -616,6 +627,13 @@ class FullFinetuneRecipeSingleDevice(FTRecipeInterface):
 
                     if self.global_step % self._log_every_n_steps == 0:
                         time_per_step = time.perf_counter() - t0
+
+                        if self.global_step > 2:
+                            total_tokens += num_tokens.cpu().numpy()
+                            total_time = total_time + time_per_step
+
+                            print("total time:", total_time, "iteration: ", self.global_step, "tokens: ", num_tokens.cpu().numpy(), "time: ", time_per_step, "tokens_per_second: ", round(num_tokens.cpu().numpy() / time_per_step ,2))                            
+
                         log_dict = {
                             "loss": loss_value,
                             "lr": get_lr(self.optimizer),
@@ -650,7 +668,17 @@ class FullFinetuneRecipeSingleDevice(FTRecipeInterface):
                     break
 
             self.epochs_run += 1
-            self.save_checkpoint(epoch=curr_epoch)
+            # self.save_checkpoint(epoch=curr_epoch)
+        print("avg tokens_per_second: ", round(total_tokens / total_time, 2))
+        if self._profiler is not None:
+            print("avg tokens_per_second_on_single_device: ", round(total_tokens / total_time, 2))
+            if self._device.type != "xpu":
+                print(self._profiler.key_averages().table(sort_by="xpu_time_total", max_name_column_width=100, row_limit=20))
+            elif self._device.type == "cuda":
+                print(self._profiler.key_averages().table(sort_by="cuda_time_total", max_name_column_width=100, row_limit=20))
+            else:
+                pass
+            print(self._profiler.key_averages().table(sort_by="cpu_time_total",  max_name_column_width=100, row_limit=20))
 
         self._profiler.stop()
 
