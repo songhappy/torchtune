@@ -100,7 +100,8 @@ profiler:
 
   #`torch.profiler.ProfilerActivity` types to trace
   cpu: True
-  cuda: True
+  cuda: False
+  xpu: True
 
   #trace options passed to `torch.profiler.profile`
   profile_memory: False

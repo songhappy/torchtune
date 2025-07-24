@@ -566,13 +566,13 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
         torch.distributed.barrier()        
         # from torchtune.modules.peft.lora import LoRALinear
         # if self._is_rank_zero:
-        #     # for name, module in model.named_modules():
-        #     #     if isinstance(module, LoRALinear):
-        #     #         print_lora_linear_structure(module, name)
-
         #     print(f"Model structure:")
-        #     print_all_parameters(model)
+        #     for name, module in model.named_modules():
+        #         if isinstance(module, LoRALinear):
+        #             print_lora_linear_structure(module, name)
 
+        #     print_all_parameters(model)
+        #     print(model)
         # sys.exit(0)
 
 
